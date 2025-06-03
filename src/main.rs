@@ -6,16 +6,18 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{SinkExt, StreamExt};
+mod types;
+use types::{CommMessage, Version};
 
 type Tx = broadcast::Sender<RoomMessage>;
 type _Rx = broadcast::Receiver<RoomMessage>;
-
 type Clients = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
 type ClientRooms = Arc<Mutex<HashMap<SocketAddr, HashSet<String>>>>;
-
 type Rooms = Arc<Mutex<HashMap<String, HashSet<SocketAddr>>>>;
 
+
 #[derive(Serialize)]
+
 struct QuestionPayload<'a> {
     question_id: &'a str,
     question: serde_json::Value
@@ -25,6 +27,8 @@ struct AddQuestionBody<'a> {
     contest_id: &'a str,
     questions: Vec<QuestionPayload<'a>>
 }
+
+
 #[derive(Serialize)]
 struct UpdateContestMessage<'a> {
     version: &'a str,
@@ -37,6 +41,7 @@ struct RoomMessage {
     room_id: String,
     content: String
 }
+
 
 
 #[tokio::main]
@@ -103,13 +108,13 @@ async fn handle_connection(
     let clients_clone = clients.clone();
     let rooms_clone = rooms.clone();
     let client_rooms_clone = client_rooms.clone();
-    // let tx_clone = tx.clone();
     let rx_task = tokio::spawn(async move {
         while let Some(msg) = ws_receiver.next().await {
             match msg {
                 Ok(Message::Frame(_)) => todo!(),
                 Ok(Message::Text(text)) => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                        println!("Message parsed: {parsed}");
                         if let Some(msg_type) = parsed["type"].as_str() {
                             match msg_type {
                                 "joinContest" => {
@@ -149,7 +154,7 @@ async fn handle_connection(
                                                         if let Some(participants) = rooms_lock.get(contest_id) {
                                                             let client_lock = clients_clone.lock().await; 
                                                             let message_content = UpdateContestMessage {
-                                                                version: "contestUpdate",
+                                                                version: "contest_update",
                                                                 questions: questions
                                                             };
 
@@ -190,7 +195,42 @@ async fn handle_connection(
                                 }
                             }
                         }
+                        if let Some (_) = parsed["version"].as_str() {
+                            let mcp_parsed = serde_json::from_str::<CommMessage>(&text);
+                            match mcp_parsed {
+                                Ok(comm) => {
+                                    match comm.version {
+                                        // added the user to room for chat with ai 
+                                        Version::NewChatRoom => {
+                                            if !comm.user_email.is_empty() {
+                                               {
+                                                    let mut rooms_lock = rooms_clone.lock().await;
+                                                    let entry = rooms_lock.entry(comm.user_email.to_string()).or_default();
+                                                    entry.insert(addr_clone2);
+                                               }
+                                               println!("{addr_clone2} joined the chat room");
+                                            }
+                                        }
+                                        // here will eceive message 
+                                        Version::Message => {
+
+                                        }
+                                        _ => {
+
+                                        }
+                                    }
+                                    
+                                }
+                                Err(e) => {
+                                    println!("Some Error Occured: {}", e);
+                                    
+                                }
+                            };
+
+                        }
+                       
                     }
+                    
 
                 }
                 Ok(Message::Close(_)) => break,
