@@ -9,6 +9,8 @@ use futures_util::{SinkExt, StreamExt};
 mod types;
 use types::{CommMessage, Version};
 
+use crate::types::{CommSender};
+
 type Tx = broadcast::Sender<RoomMessage>;
 type _Rx = broadcast::Receiver<RoomMessage>;
 type Clients = Arc<Mutex<HashMap<SocketAddr, Tx>>>;
@@ -114,7 +116,6 @@ async fn handle_connection(
                 Ok(Message::Frame(_)) => todo!(),
                 Ok(Message::Text(text)) => {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                        println!("Message parsed: {parsed}");
                         if let Some(msg_type) = parsed["type"].as_str() {
                             match msg_type {
                                 "joinContest" => {
@@ -202,22 +203,63 @@ async fn handle_connection(
                                     match comm.version {
                                         // added the user to room for chat with ai 
                                         Version::NewChatRoom => {
-                                            if !comm.user_email.is_empty() {
+                                            if let Some(user_email_addr) = comm.user_email {
+                                                if !user_email_addr.is_empty() {
                                                {
                                                     let mut rooms_lock = rooms_clone.lock().await;
-                                                    let entry = rooms_lock.entry(comm.user_email.to_string()).or_default();
+                                                    let entry = rooms_lock.entry(user_email_addr.to_string()).or_default();
                                                     entry.insert(addr_clone2);
                                                }
                                                println!("{addr_clone2} joined the chat room");
                                             }
+                                            }
                                         }
-                                        // here will eceive message 
-                                        Version::Message => {
+                                        // here will receive message form the user process it send to llm get back the response and send it back to the user
+                                        Version::GetUserDetails => {
+                                            println!("{:#?}", comm);
+                                            let rooms_lock = rooms_clone.lock().await;
+                                            if let Some(user_email_addr) = comm.user_email {
+                                                if let Some(participants) = rooms_lock.get(&user_email_addr) {
+                                                    let client_lock = clients_clone.lock().await;
+                                                    for participant_addr in participants {
+                                                        if let Some(participant_tx) = client_lock.get(participant_addr) {
+
+                                                            let data = CommMessage {
+                                                                version: Version::ResponseFromMcp,
+                                                                ai_response: Some("Btech Student studying in Newton School of Technnology, Profifcient in mern stack, nextjs, rust and web3".to_string()),
+                                                                sender: CommSender::System,
+                                                                config: None,
+                                                                user_email: None,
+                                                                user_apikey: None,
+                                                                messages: None,
+                                                                config_updated: None,
+                                                            };
+
+                                                            if let Ok(json_string) = serde_json::to_string(&data) {
+                                                                let room_message = RoomMessage {
+                                                                    room_id: user_email_addr.clone(),
+                                                                    content: json_string
+                                                                };
+
+                                                                let _ = participant_tx.send(room_message);
+                                                                println!("Sent response")
+
+                                                            }
+
+                                                            else {
+                                                                println!("Some error occured")
+                                                            }
+
+                                                        }
+                                                    }
+                                            }
+                                            }
 
                                         }
                                         _ => {
-
+                                            println!("Exception occured")
                                         }
+                                        
                                     }
                                     
                                 }
